@@ -5,7 +5,7 @@
 If you discover a cryptographic flaw, authentication bypass, privacy leak, or security vulnerability in **YUZx (`com.xchat.android`)** or any module in this repository:
 
 - **Email:** `privacy@rakshaplus.in`
-- **GitHub:** Open a private [Security Advisory](https://github.com/arumawears-cyber/yuzx-security/security/advisories) on this repository.
+- **GitHub:** Open a private [Security Advisory](https://github.com/yuzx776/yuzx-security/security/advisories) on this repository.
 
 Please include:
 1. Affected component or file path

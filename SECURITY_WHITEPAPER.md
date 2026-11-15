@@ -3,7 +3,7 @@
 - **Application ID:** `com.xchat.android`
 - **Version:** `1.5.6` (`versionCode = 56`)
 - **Developer:** Amit Mallick / Shinra Labs (RakshaPlus Technologies)
-- **Public Verification Repo:** `https://github.com/arumawears-cyber/yuzx-security`
+- **Public Verification Repo:** `https://github.com/yuzx776/yuzx-security`
 - **PDF Edition:** [YUZx_Security_Whitepaper_v1.5.6.pdf](./YUZx_Security_Whitepaper_v1.5.6.pdf)
 
 ---
