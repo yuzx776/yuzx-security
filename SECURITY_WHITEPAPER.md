@@ -18,6 +18,8 @@ Unlike legacy security tools that require root access, invasive accessibility se
 
 ## 2. Cryptographic & Identity Architecture
 
+- **End-to-End Message Encryption (`E2eeCryptoEngine.kt`, `E2eeKeyManager.kt`):**
+  Uses Elliptic Curve Diffie-Hellman (`ECDH` over `secp256r1` / NIST P-256) for peer key agreement, `HKDF-SHA256` (`yuzx-e2ee-v1`) to derive 256-bit symmetric keys, and `AES-256-GCM` (12-byte `SecureRandom` IV, 128-bit authentication tag) per message (`e2ee:<iv_base64>:<ciphertext_base64>`).
 - **Zero-Knowledge Vault Identity (`ZeroKnowledgeVaultManager.kt`):**
   Generates phone-number-free identities (`YUZX-XXXX-XXXX-XXXX`) using `SecureRandom.getInstanceStrong()` with a 256-bit (32-byte) `vault_secret`, 32-byte public key digest, and SHA-256 integrity checksum (`YUZX_ZERO_KNOWLEDGE_VAULT_V1`). Secret byte arrays are zeroed in memory after serialization.
 - **Hardware-Backed App Lock (`AppLockManager.kt`):**

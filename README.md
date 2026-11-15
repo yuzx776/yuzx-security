@@ -10,6 +10,8 @@ This repository publishes the **public security specification, technical whitepa
 
 | Component | Source File | Security Guarantee |
 | :--- | :--- | :--- |
+| **End-to-End Message Encryption** | [`E2eeCryptoEngine.kt`](./src/crypto/E2eeCryptoEngine.kt) | ECDH (`secp256r1` / NIST P-256) key agreement, `HKDF-SHA256` key derivation, and `AES-256-GCM` (12-byte IV, 128-bit auth tag) per message |
+| **E2EE Key Lifecycle & Tests** | [`E2eeKeyManager.kt`](./src/crypto/E2eeKeyManager.kt), [`E2eeCryptoEngineTest.kt`](./src/crypto/E2eeCryptoEngineTest.kt) | Automated unit tests + peer public key derivation and local encrypted key storage |
 | **Zero-Knowledge Vault Identity** | [`ZeroKnowledgeVaultManager.kt`](./src/security/ZeroKnowledgeVaultManager.kt) | Phone-number-free `YUZX-XXXX-XXXX-XXXX` identity, 256-bit `SecureRandom` secret token, SHA-256 checksum, and in-memory byte zeroing |
 | **Hardware-Backed App Lock** | [`AppLockManager.kt`](./src/security/AppLockManager.kt) | `AndroidKeyStore` 256-bit AES-GCM (`yuzx_app_lock_key`) + `PBKDF2WithHmacSHA256` PIN hashing |
 | **Plausible Deniability (Cipher Mode)** | [`CipherMaskTransformer.kt`](./src/security/CipherMaskTransformer.kt) | Deterministic decoy conversation/contact rendering under a secondary Duress PIN |
