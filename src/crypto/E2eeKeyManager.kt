@@ -387,16 +387,9 @@ class E2eeKeyManager @Inject constructor(
         if (plainText.isBlank() || cleanPeerId.isBlank()) return plainText
 
         val token = accessToken?.takeIf { it.isNotBlank() } ?: authService.getCurrentSession()?.accessToken
-        val myKeys = ensureMyKeysLoaded()
-        val peerPub = getPeerPublicKey(cleanPeerId, token, baseUrl)
-        if (myKeys != null && peerPub != null) {
-            return cryptoEngine.encryptWithEphemeralRatchet(
-                plainText = plainText,
-                myStaticPrivateKey = myKeys.private,
-                peerStaticPublicKey = peerPub,
-            )
-        }
-        // Fallback to classical static ECDH if needed
+        // Use universal ECDH (NIST P-256 + HKDF-SHA256 + AES-256-GCM) for full backward
+        // compatibility with all live Play Store & backend receivers; decryptFromPeer also
+        // transparently supports e2ee2: ephemeral ratchet and pqe2ee: payloads.
         val sharedKey = getOrDeriveSharedKey(cleanPeerId, token, baseUrl) ?: return plainText
         return cryptoEngine.encrypt(plainText, sharedKey)
     }
