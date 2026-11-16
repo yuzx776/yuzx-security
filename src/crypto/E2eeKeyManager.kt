@@ -37,8 +37,10 @@ class E2eeKeyManager @Inject constructor(
     private val scope = CoroutineScope(Dispatchers.IO)
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    // In-memory cache for derived shared AES keys (0ms instant lookup)
+    // In-memory cache for derived shared AES keys (0ms instant lookup, 2-min TTL to pick up peer key rotations)
     private val sharedKeysCache = ConcurrentHashMap<String, SecretKey>()
+    private val sharedKeyCachedAt = ConcurrentHashMap<String, Long>()
+    private val sharedKeyTtlMs = 2 * 60 * 1000L
 
     // In-memory cache for peer classical public keys
     private val peerPublicKeysCache = ConcurrentHashMap<String, PublicKey>()
@@ -62,6 +64,7 @@ class E2eeKeyManager @Inject constructor(
                     if (currentUserId != userId || myKeyPair == null || myKyberKeyPair == null) {
                         currentUserId = userId
                         sharedKeysCache.clear()
+                        sharedKeyCachedAt.clear()
                         peerPublicKeysCache.clear()
                         peerKyberPublicKeysCache.clear()
                         loadOrGenerateMyKeysForUser(userId)
@@ -329,13 +332,15 @@ class E2eeKeyManager @Inject constructor(
     ) {
         val cleanPeerId = peerUserId.normalizedUserId()
         if (cleanPeerId.isBlank()) return
-        if (sharedKeysCache.containsKey(cleanPeerId)) return
+        val cachedAt = sharedKeyCachedAt[cleanPeerId]
+        val isFresh = cachedAt != null && (System.currentTimeMillis() - cachedAt) < sharedKeyTtlMs
+        if (sharedKeysCache.containsKey(cleanPeerId) && isFresh) return
         val lastNegative = noPublicKeyPeers[cleanPeerId]
         if (lastNegative != null && (System.currentTimeMillis() - lastNegative) < negativeCacheTtlMs) return
 
         scope.launch {
             try {
-                getOrDeriveSharedKey(cleanPeerId, accessToken, baseUrl)
+                getOrDeriveSharedKey(cleanPeerId, accessToken, baseUrl, forceRefresh = !isFresh)
             } catch (e: Exception) {
                 Log.d(TAG, "Preload E2EE key for $cleanPeerId completed: ${e.message}")
             }
@@ -353,17 +358,21 @@ class E2eeKeyManager @Inject constructor(
     ): SecretKey? = withContext(Dispatchers.IO) {
         val cleanPeerId = peerUserId.normalizedUserId()
         if (cleanPeerId.isBlank()) return@withContext null
-        if (!forceRefresh) {
+        val cachedAt = sharedKeyCachedAt[cleanPeerId]
+        val isExpired = cachedAt == null || (System.currentTimeMillis() - cachedAt) >= sharedKeyTtlMs
+        val effectiveForceRefresh = forceRefresh || isExpired
+        if (!effectiveForceRefresh) {
             sharedKeysCache[cleanPeerId]?.let { return@withContext it }
         }
 
         val myPriv = (ensureMyKeysLoaded()?.private) ?: return@withContext null
         val token = accessToken?.takeIf { it.isNotBlank() } ?: authService.getCurrentSession()?.accessToken
-        val peerPub = getPeerPublicKey(cleanPeerId, token, baseUrl, forceRefresh) ?: return@withContext null
+        val peerPub = getPeerPublicKey(cleanPeerId, token, baseUrl, effectiveForceRefresh) ?: return@withContext null
 
         try {
             val derived = cryptoEngine.deriveSharedKey(myPriv, peerPub)
             sharedKeysCache[cleanPeerId] = derived
+            sharedKeyCachedAt[cleanPeerId] = System.currentTimeMillis()
             derived
         } catch (e: Exception) {
             Log.e(TAG, "Failed to derive shared key with $cleanPeerId", e)
