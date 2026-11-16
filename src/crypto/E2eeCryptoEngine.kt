@@ -113,6 +113,105 @@ class E2eeCryptoEngine @Inject constructor() {
     }
 
     /**
+     * Encrypt plaintext using Per-Message Ephemeral ECDH Forward Secrecy (v2).
+     * Combines static ECDH(myStaticPriv, peerStaticPub) with a fresh single-use
+     * ephemeral ECDH(ephemeralPriv, peerStaticPub) via HKDF-SHA256, then encrypts
+     * with AES-256-GCM (12-byte IV, 128-bit auth tag). The ephemeral private key
+     * and intermediate secrets are immediately discarded and zeroed.
+     *
+     * Format: "e2ee2:<ephemeral_pub_base64>:<iv_base64>:<ciphertext_base64>"
+     */
+    fun encryptWithEphemeralRatchet(
+        plainText: String,
+        myStaticPrivateKey: PrivateKey,
+        peerStaticPublicKey: PublicKey,
+    ): String {
+        val ephemeralKeyPair = generateKeyPair()
+        val staticSecret = performEcdh(myStaticPrivateKey, peerStaticPublicKey)
+        val ephemeralSecret = performEcdh(ephemeralKeyPair.private, peerStaticPublicKey)
+        val ikm = ByteArray(staticSecret.size + ephemeralSecret.size)
+        var derivedKeyBytes: ByteArray? = null
+        return try {
+            System.arraycopy(staticSecret, 0, ikm, 0, staticSecret.size)
+            System.arraycopy(ephemeralSecret, 0, ikm, staticSecret.size, ephemeralSecret.size)
+            derivedKeyBytes = hkdfSha256(ikm, RATCHET_HKDF_INFO, 32)
+            val msgKey = SecretKeySpec(derivedKeyBytes, "AES")
+
+            val iv = ByteArray(GCM_IV_LENGTH_BYTES)
+            secureRandom.nextBytes(iv)
+            val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, msgKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+
+            val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+            val ephPubBase64 = encodePublicKey(ephemeralKeyPair.public)
+            val ivBase64 = CryptoBase64.encode(iv)
+            val cipherBase64 = CryptoBase64.encode(cipherBytes)
+            "$E2EE_V2_PREFIX$ephPubBase64:$ivBase64:$cipherBase64"
+        } finally {
+            java.util.Arrays.fill(staticSecret, 0.toByte())
+            java.util.Arrays.fill(ephemeralSecret, 0.toByte())
+            java.util.Arrays.fill(ikm, 0.toByte())
+            derivedKeyBytes?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Decrypt "e2ee2:<ephemeral_pub_base64>:<iv_base64>:<ciphertext_base64>"
+     * using receiver's static private key and sender's static public key.
+     * Returns null if GCM authentication fails or payload is malformed.
+     */
+    fun decryptWithEphemeralRatchet(
+        payload: String,
+        myStaticPrivateKey: PrivateKey,
+        peerStaticPublicKey: PublicKey,
+    ): String? {
+        if (!payload.startsWith(E2EE_V2_PREFIX)) {
+            return decrypt(payload, deriveSharedKey(myStaticPrivateKey, peerStaticPublicKey))
+        }
+        val parts = payload.removePrefix(E2EE_V2_PREFIX).split(':', limit = 3)
+        if (parts.size != 3) return null
+
+        var staticSecret: ByteArray? = null
+        var ephemeralSecret: ByteArray? = null
+        var ikm: ByteArray? = null
+        var derivedKeyBytes: ByteArray? = null
+        return try {
+            val ephemeralPub = decodePublicKey(parts[0])
+            val iv = CryptoBase64.decode(parts[1])
+            val cipherBytes = CryptoBase64.decode(parts[2])
+
+            staticSecret = performEcdh(myStaticPrivateKey, peerStaticPublicKey)
+            ephemeralSecret = performEcdh(myStaticPrivateKey, ephemeralPub)
+            ikm = ByteArray(staticSecret.size + ephemeralSecret.size)
+            System.arraycopy(staticSecret, 0, ikm, 0, staticSecret.size)
+            System.arraycopy(ephemeralSecret, 0, ikm, staticSecret.size, ephemeralSecret.size)
+
+            derivedKeyBytes = hkdfSha256(ikm, RATCHET_HKDF_INFO, 32)
+            val msgKey = SecretKeySpec(derivedKeyBytes, "AES")
+            val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, msgKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+            String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
+        } catch (e: Throwable) {
+            try {
+                Log.w(TAG, "Failed to decrypt e2ee2 ratchet payload: ${e.message}")
+            } catch (_: Throwable) {}
+            null
+        } finally {
+            staticSecret?.let { java.util.Arrays.fill(it, 0.toByte()) }
+            ephemeralSecret?.let { java.util.Arrays.fill(it, 0.toByte()) }
+            ikm?.let { java.util.Arrays.fill(it, 0.toByte()) }
+            derivedKeyBytes?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    private fun performEcdh(privateKey: PrivateKey, publicKey: PublicKey): ByteArray {
+        val keyAgreement = KeyAgreement.getInstance("ECDH")
+        keyAgreement.init(privateKey)
+        keyAgreement.doPhase(publicKey, true)
+        return keyAgreement.generateSecret()
+    }
+
+    /**
      * Decrypt "e2ee:<iv_base64>:<ciphertext_base64>" back to original plaintext.
      * Returns null if decryption or GCM tag verification fails.
      */
@@ -168,6 +267,8 @@ class E2eeCryptoEngine @Inject constructor() {
     companion object {
         private const val TAG = "E2eeCryptoEngine"
         const val E2EE_PREFIX = "e2ee:"
+        const val E2EE_V2_PREFIX = "e2ee2:"
+        private val RATCHET_HKDF_INFO = "yuzx-e2ee-v2-ratchet".toByteArray(Charsets.UTF_8)
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_IV_LENGTH_BYTES = 12
         private const val GCM_TAG_LENGTH_BITS = 128

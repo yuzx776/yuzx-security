@@ -119,4 +119,30 @@ class E2eeCryptoEngineTest {
         val decrypted = cryptoEngine.decrypt(newCiphertext, bobNewSharedKey)
         assertEquals(message, decrypted)
     }
+
+    @Test
+    fun `Ephemeral ratchet v2 encrypts and decrypts with per-message forward secrecy`() {
+        val aliceKeyPair = cryptoEngine.generateKeyPair()
+        val bobKeyPair = cryptoEngine.generateKeyPair()
+        val eveKeyPair = cryptoEngine.generateKeyPair()
+
+        val msg = "Per-message ephemeral ECDH forward secrecy test"
+        val payload1 = cryptoEngine.encryptWithEphemeralRatchet(msg, aliceKeyPair.private, bobKeyPair.public)
+        val payload2 = cryptoEngine.encryptWithEphemeralRatchet(msg, aliceKeyPair.private, bobKeyPair.public)
+
+        assertTrue(payload1.startsWith(E2eeCryptoEngine.E2EE_V2_PREFIX))
+        assertTrue(payload2.startsWith(E2eeCryptoEngine.E2EE_V2_PREFIX))
+        // Identical plaintext must produce distinct ephemeral public keys, IVs, and ciphertexts
+        assertNotEquals(payload1, payload2)
+
+        assertEquals(msg, cryptoEngine.decryptWithEphemeralRatchet(payload1, bobKeyPair.private, aliceKeyPair.public))
+        assertEquals(msg, cryptoEngine.decryptWithEphemeralRatchet(payload2, bobKeyPair.private, aliceKeyPair.public))
+
+        // Eve cannot decrypt with wrong private key
+        assertNull(cryptoEngine.decryptWithEphemeralRatchet(payload1, eveKeyPair.private, aliceKeyPair.public))
+
+        // Tampered ciphertext fails GCM authentication
+        val tampered = payload1.dropLast(4) + "AAAA"
+        assertNull(cryptoEngine.decryptWithEphemeralRatchet(tampered, bobKeyPair.private, aliceKeyPair.public))
+    }
 }

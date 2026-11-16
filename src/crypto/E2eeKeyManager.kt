@@ -387,7 +387,16 @@ class E2eeKeyManager @Inject constructor(
         if (plainText.isBlank() || cleanPeerId.isBlank()) return plainText
 
         val token = accessToken?.takeIf { it.isNotBlank() } ?: authService.getCurrentSession()?.accessToken
-        // Symmetric ECDH (NIST P-256 + AES-256-GCM) ensures both sender and receiver can decrypt the conversation
+        val myKeys = ensureMyKeysLoaded()
+        val peerPub = getPeerPublicKey(cleanPeerId, token, baseUrl)
+        if (myKeys != null && peerPub != null) {
+            return cryptoEngine.encryptWithEphemeralRatchet(
+                plainText = plainText,
+                myStaticPrivateKey = myKeys.private,
+                peerStaticPublicKey = peerPub,
+            )
+        }
+        // Fallback to classical static ECDH if needed
         val sharedKey = getOrDeriveSharedKey(cleanPeerId, token, baseUrl) ?: return plainText
         return cryptoEngine.encrypt(plainText, sharedKey)
     }
@@ -443,7 +452,29 @@ class E2eeKeyManager @Inject constructor(
             }
         }
 
-        // 2. Classical E2EE Payload
+        // 2. Ephemeral Forward-Secrecy Ratchet Payload (e2ee2:)
+        if (payload.startsWith(E2eeCryptoEngine.E2EE_V2_PREFIX)) {
+            noPublicKeyPeers.remove(cleanPeerId)
+            val token = accessToken?.takeIf { it.isNotBlank() } ?: authService.getCurrentSession()?.accessToken
+            val myKeys = ensureMyKeysLoaded()
+            val peerPub = getPeerPublicKey(cleanPeerId, token, baseUrl, forceRefresh = false)
+            var decrypted = if (myKeys != null && peerPub != null) {
+                cryptoEngine.decryptWithEphemeralRatchet(payload, myKeys.private, peerPub)
+            } else null
+
+            if (decrypted == null && myKeys != null && !token.isNullOrBlank()) {
+                Log.d(TAG, "Initial e2ee2 decrypt failed for peer $cleanPeerId. Refreshing public key...")
+                peerPublicKeysCache.remove(cleanPeerId)
+                sharedKeysCache.remove(cleanPeerId)
+                val freshPeerPub = getPeerPublicKey(cleanPeerId, token, baseUrl, forceRefresh = true)
+                if (freshPeerPub != null) {
+                    decrypted = cryptoEngine.decryptWithEphemeralRatchet(payload, myKeys.private, freshPeerPub)
+                }
+            }
+            return decrypted
+        }
+
+        // 3. Classical E2EE Payload (e2ee:)
         if (payload.startsWith(E2eeCryptoEngine.E2EE_PREFIX)) {
             noPublicKeyPeers.remove(cleanPeerId)
             var sharedKey = getOrDeriveSharedKey(cleanPeerId, accessToken, baseUrl, forceRefresh = false)
